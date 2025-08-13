@@ -14,7 +14,7 @@ running = False  # 控制腳本運行狀態
 def serverRefresh(interval):
     # init 
     global running
-    time.sleep(2)
+    time.sleep(5)
     refresh_img = cv2.imread("image/refresh.png")
     more_img = cv2.imread("image/more.png")
     shutdown_img = cv2.imread("image/shutdown.png")
@@ -30,7 +30,7 @@ def serverRefresh(interval):
             pyautogui.moveTo(ref_pos[0], ref_pos[1], duration=0.5)
             pyautogui.click()
 
-        time.sleep(1)
+        time.sleep(5)
         
         # press more button
         more_pos = getImagePosOnScreen(more_img)
@@ -42,7 +42,7 @@ def serverRefresh(interval):
             pyautogui.moveTo(more_pos[0], more_pos[1], duration=0.5)
             pyautogui.click()
             
-        time.sleep(1)
+        time.sleep(5)
         
         # press more button
         shutdown_pos = getImagePosOnScreen(shutdown_img)

@@ -3,12 +3,14 @@ import cv2
 import numpy as np
 
 
-def getImagePosOnScreen(img):
+def getImagePosOnScreen(img, isDark=False):
     # 擷取螢幕
     screenshot = pyautogui.screenshot()
     screenshot = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
 
     # 模板比對
+    if isDark:
+        img = cv2.bitwise_not(img)
     result = cv2.matchTemplate(screenshot, img, cv2.TM_CCOEFF_NORMED)
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
 

@@ -5,7 +5,7 @@ import cv2
 from func import *
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 def serverRefresh(isDark=False):
@@ -59,7 +59,6 @@ def run_scheduler(app_state):
     print(f"Timeline: {time_points}")
     
     TOLERANCE = 5  # 容錯範圍（秒）
-    triggered_today = set()  # 避免同一天重複觸發
     active = True
 
     while active:
@@ -70,16 +69,8 @@ def run_scheduler(app_state):
             delta = (now - target).total_seconds()
 
             # 判斷是否在 [0, TOLERANCE] 秒範圍內，且未觸發過
-            if 0 <= delta <= TOLERANCE and tp not in triggered_today:
+            if 0 <= delta <= TOLERANCE:
                 active = serverRefresh(isDark)
-                triggered_today.add(tp)
-
-        # 午夜清空觸發紀錄（增加 5 秒容錯）
-        midnight = datetime(now.year, now.month, now.day, 0, 0, 0)
-        delta_midnight = (now - midnight).total_seconds()
-        if 0 <= delta_midnight <= TOLERANCE:
-            triggered_today.clear()
-            print("午夜重置觸發紀錄")
 
         time.sleep(1)
         

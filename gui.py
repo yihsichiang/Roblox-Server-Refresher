@@ -1,129 +1,201 @@
 import tkinter as tk
+import json
+import os
 from threading import Thread
-from tkinter import messagebox
 import keyboard
-import time
-import pyautogui
-import cv2
-from func import *
+import signal
+import sys
+import subprocess
+from timeEntry import *
+from serverRefresh import *
 
 
-running = False  # 控制腳本運行狀態
+SETTINGS_FILE = "settings.json"
 
 
-def serverRefresh(interval, isDark=False):
-    # init 
-    global running
-    print(f"isDark: {isDark}")
-    time.sleep(5)
-    refresh_img = cv2.imread("image/refresh.png")
-    more_img = cv2.imread("image/more.png")
-    shutdown_img = cv2.imread("image/shutdown.png")
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        # 建立 Tkinter 視窗
+        self.title("Roblox Server Refresher")
+        self.geometry("450x350")
+        self.resizable(False, False)
+
+        self.buildStartEndButton()
+        self.buildDarkSelect()
+        self.buildTimeList()
+        
+        # 載入設定
+        self.load_settings()
+
+        # 關閉視窗時存檔
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
+        self.script_process = None
+
+        # 註冊熱鍵
+        keyboard.add_hotkey("F1", self.start_script)
+        keyboard.add_hotkey("F2", self.stop_script)
+        
     
-    while running:
-        # press refresh button
-        ref_pos = getImagePosOnScreen(refresh_img, isDark)
-        if not ref_pos:
-            # print("Error: can't find \"refresh\" button.")
-            messagebox.showerror("Error", f"Error: can't find \"refresh\" button.")
-            break
-        else:
-            pyautogui.moveTo(ref_pos[0], ref_pos[1], duration=0.5)
-            pyautogui.click()
-
-        time.sleep(5)
+    def buildStartEndButton(self):
+        frame = tk.Frame(self)
+        frame.pack(pady=5)
         
-        # press more button
-        more_pos = getImagePosOnScreen(more_img, isDark)
-        if not more_pos:
-            # print("Error: can't find \"more\" button.")
-            messagebox.showerror("Error", f"Error: can't find \"more\" button.")
-            break
-        else:
-            pyautogui.moveTo(more_pos[0], more_pos[1], duration=0.5)
-            pyautogui.click()
+        # 建立按鈕
+        start_btn = tk.Button(frame, text="Start (F1)", command=self.start_script, font=("Arial", 14))
+        start_btn.grid(row=0, column=0)
+
+        stop_btn = tk.Button(frame, text="End (F2)", command=self.stop_script, font=("Arial", 14))
+        stop_btn.grid(row=0, column=1)
+        
+        
+    def buildTimeList(self):
+        self.timeFrame = tk.Frame(self)
+        self.timeFrame.pack(pady=5)
+        
+        self.time_entries = []
+        
+        # === 加入滾動區域 ===
+        container = tk.LabelFrame(self.timeFrame, text="Timeline", relief="solid", borderwidth=1, font=("Arial", 14))
+        container.grid(row=0, column=0, pady=5)
+
+        # Canvas + Scrollbar
+        self.canvas = tk.Canvas(container, height=150)  # 視窗高度可調
+        self.scrollbar = tk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = tk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(
+                scrollregion=self.canvas.bbox("all")
+            )
+        )
+
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        # 加號按鈕
+        add_btn = tk.Button(self.timeFrame, text="+ Add timeline", command=self.add_time_entry, font=("Arial", 14))
+        add_btn.grid(row=1, column=0, pady=5)
+
+        # 測試用：顯示目前所有時間點
+        # show_btn = tk.Button(self.timeFrame, text="顯示時間列表", command=self.show_times, font=("Arial", 14))
+        # show_btn.grid(row=2, column=0, pady=5)
+        
+        
+    def buildDarkSelect(self):
+        dark_frame = tk.Frame(self)
+        dark_frame.pack(pady=5)
+
+        self.isDark = tk.BooleanVar(value=False)
+        
+        dark_mode_checkbox = tk.Checkbutton(
+            dark_frame, 
+            text="Dark mode", 
+            variable=self.isDark,
+            font=("Arial", 14)
+        )
+        dark_mode_checkbox.grid(row=0, column=0, padx=10, sticky="w")
+        
+        self.isDark.trace_add("write", lambda *a: self.save_settings())
+        
+        
+    def add_time_entry(self, time_str="00:00:00"):
+        entry = TimeEntry(
+            self.scrollable_frame,
+            on_change_callback=self.save_settings,
+            remove_callback=lambda e=None: self.remove_time_entry(entry)
+        )
+        entry.set_time(time_str)
+        self.time_entries.append(entry)
+        self.refresh_entries()
+        self.save_settings()
+
+    def remove_time_entry(self, entry):
+        self.time_entries.remove(entry)
+        entry.destroy()
+        self.refresh_entries()
+        self.save_settings()
+
+    def refresh_entries(self):
+        for idx, entry in enumerate(self.time_entries):
+            entry.grid(row=idx, column=0, pady=2, sticky="w")
+            entry.set_label(idx)
+
+
+    def get_all_times(self):
+        return [entry.get_time_str() for entry in self.time_entries]
+    
+    
+    def get_all_states(self):
+        state = {
+            "dark_mode": self.isDark.get(),
+            "times": self.get_all_times()
+        }
+        return state
+
+
+    def save_settings(self):
+        data = {
+            "dark_mode": self.isDark.get(),
+            "times": self.get_all_times()
+        }
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+
+    def load_settings(self):
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.isDark.set(data.get("dark_mode", False))
+            for t in data.get("times", []):
+                self.add_time_entry(t)
+
+
+    def on_close(self):
+        self.save_settings()
+        self.kill_subprocess()
+        self.destroy()
+
+
+    def start_script(self):
+        if self.script_process is not None:
+            return
+        print("Start triggered")
+        self.iconify()
+        
+        def run_script():
+            self.script_process = subprocess.Popen(
+                [sys.executable, "serverRefresh.py", json.dumps(self.get_all_states())],
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            self.script_process.wait()
+            self.script_process = None
+            self.stop_script()
             
-        time.sleep(5)
+        Thread(target=run_script, daemon=True).start()
+
+
+    def stop_script(self):
+        print("End triggered")
+        self.kill_subprocess()
+        self.deiconify()
+        self.lift()
+        self.attributes("-topmost", True)
+        self.after(500, lambda: self.attributes("-topmost", False))
         
-        # press more button
-        shutdown_pos = getImagePosOnScreen(shutdown_img, isDark)
-        if not shutdown_pos:
-            # print("Error: can't find \"shutdown\" button.")
-            messagebox.showerror("Error", f"Error: can't find \"shutdown\" button.")
-            break
-        else:
-            pyautogui.moveTo(shutdown_pos[0], shutdown_pos[1], duration=0.5)
-            pyautogui.click()
-
-        # 等待 t 秒再執行下一次
-        time.sleep(interval)
         
-    stop_script()
+    def kill_subprocess(self):
+        if self.script_process is not None:
+            self.script_process.send_signal(signal.CTRL_BREAK_EVENT)
+            self.script_process = None
 
 
-def start_script():
-    global running
-    if not running:
-        running = True
-        time_interval = int(hour_spin.get())*3600 + int(min_spin.get())*60 + int(sec_spin.get())
-        Thread(target=serverRefresh, args=(time_interval, dark_mode.get()), daemon=True).start()
-        root.iconify()  # 最小化視窗
-        print("啟動腳本")
-
-
-def stop_script():
-    global running
-    running = False
-    root.deiconify()  # 還原視窗
-    root.lift()       # 拉到最上層
-    root.attributes('-topmost', True)
-    root.attributes('-topmost', False)
-    print("腳本已停止")
-
-
-# 建立 Tkinter 視窗
-root = tk.Tk()
-root.title("Roblox Server Refresher")
-root.geometry("350x250")
-
-# 建立按鈕
-start_btn = tk.Button(root, text="Start (F1)", command=start_script, font=("Arial", 14))
-start_btn.pack(pady=10)
-
-stop_btn = tk.Button(root, text="End (F2)", command=stop_script, font=("Arial", 14))
-stop_btn.pack(pady=10)
-
-time_frame = tk.Frame(root)
-time_frame.pack(pady=5)
-
-tk.Label(time_frame, text="Time interval to refresh server: ", font=("Arial", 14)).grid(row=0, columnspan=6)
-
-tk.Label(time_frame, text="hour").grid(row=1, column=1)
-hour_spin = tk.Spinbox(time_frame, from_=0, to=23, width=5, font=("Arial", 12))
-hour_spin.grid(row=1, column=0, padx=5)
-
-tk.Label(time_frame, text="min").grid(row=1, column=3)
-min_spin = tk.Spinbox(time_frame, from_=0, to=59, width=5, font=("Arial", 12))
-min_spin.grid(row=1, column=2, padx=5)
-
-tk.Label(time_frame, text="sec").grid(row=1, column=5)
-sec_spin = tk.Spinbox(time_frame, from_=0, to=59, width=5, font=("Arial", 12))
-sec_spin.grid(row=1, column=4, padx=5)
-
-dark_frame = tk.Frame(root)
-dark_frame.pack(pady=5)
-
-dark_mode = tk.BooleanVar(value=False)
-dark_mode_checkbox = tk.Checkbutton(
-    dark_frame, 
-    text="Dark mode", 
-    variable=dark_mode,
-    font=("Arial", 14)
-)
-dark_mode_checkbox.grid(row=0, column=0, padx=10, pady=10, sticky="w")
-
-# 註冊熱鍵
-keyboard.add_hotkey("F1", start_script)
-keyboard.add_hotkey("F2", stop_script)
-
-root.mainloop()
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
